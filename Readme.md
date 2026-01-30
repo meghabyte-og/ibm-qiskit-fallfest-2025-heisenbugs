@@ -1,55 +1,68 @@
-# BCC Protein Folding on a Body-Centered Cubic Lattice  
-**QUBO Construction, Constraint Encoding, and One-Hot Simulated Annealing**
+# BCC Protein Folding on a Body-Centered Cubic Lattice
+## QUBO Construction, Constraint Encoding, and One-Hot Simulated Annealing
 
 ---
 
 ## Overview
 
-This repository implements a **body-centered cubic (BCC) lattice protein folding model** with explicit **QUBO (Quadratic Unconstrained Binary Optimization)** construction suitable for classical and quantum optimization workflows.
+This repository implements a **body-centered cubic (BCC) lattice protein folding model**
+with an explicit **QUBO (Quadratic Unconstrained Binary Optimization)** formulation.
 
-The project demonstrates:
-- Exact geometric encoding of self-avoiding protein chains on a BCC lattice
-- Turn-based and coordinate-based encodings
-- Constraint-preserving QUBO formulations (one-hot, adjacency, collision)
-- HP and Miyazawa–Jernigan (MJ96) contact energy models
-- Export to `qiskit_optimization.QuadraticProgram`
-- A custom **block-move simulated annealer** that maintains one-hot feasibility
+The project focuses on **correct geometric modeling**, **explicit constraint encoding**,
+and **optimization-ready problem construction**, suitable for classical and quantum
+optimization workflows (via Qiskit).
+
+This is a **technical, interview-grade codebase** intended to demonstrate:
+- Discrete lattice geometry modeling
+- Binary optimization design (QUBO / Ising form)
+- Constraint engineering with penalties
+- Hybrid classical–quantum interfaces
+
 ---
 
-## Mathematical Model
+## Lattice Geometry
 
-### Lattice
-- **Geometry**: 3D Body-Centered Cubic (BCC)
-- **Step set**: 8 body-diagonal directions  
-  \[
-  (\pm1, \pm1, \pm1)
-  \]
-- **Angle spectrum** (non-backtracking):
-  - 70.53°
-  - 109.47°
+- Lattice type: **Body-Centered Cubic (BCC)**
+- Allowed steps (8 body diagonals):
 
-### Chain Representation
-- Protein of length \(N\)
-- Each residue occupies exactly one lattice position
-- Consecutive residues must be BCC neighbors
-- Self-avoidance enforced globally
+  (+1,+1,+1), (+1,+1,-1), (+1,-1,+1), (+1,-1,-1),
+  (-1,+1,+1), (-1,+1,-1), (-1,-1,+1), (-1,-1,-1)
+
+- Non-backtracking bond angles:
+  - 70.53 degrees
+  - 109.47 degrees
+
+These angles arise from dot products of BCC direction vectors.
+
+---
+
+## Chain Representation
+
+- Protein length: `N` residues
+- Each residue occupies exactly **one lattice position**
+- Consecutive residues must be **BCC neighbors**
+- No two residues may occupy the same lattice site (self-avoidance)
 
 ---
 
 ## Encodings
 
 ### 1. Turn Encoding
-Each bond is encoded by:
-- **Index** \( \in \{0,\dots,7\} \)
-- **3-bit representation** (one register per bond)
 
-Features:
-- Backtracking forbidden via XOR symmetry
+Each bond is encoded as:
+- An integer direction index in `[0, 7]`
+- A 3-bit binary code (one register per bond)
+
+Properties:
+- Immediate backtracking is forbidden via XOR symmetry
 - Exact reconstruction of Cartesian coordinates
-- Angle computation between successive bonds
+- Explicit bond-angle computation
+
+---
 
 ### 2. Coordinate Encoding
-- Absolute lattice positions reconstructed from turns
+
+- Absolute lattice coordinates reconstructed from turns
 - Enables:
   - Self-avoidance checks
   - Contact detection
@@ -60,78 +73,104 @@ Features:
 ## Energy Models
 
 ### HP Model
-- Binary hydrophobic/polar mapping
-- Energy:
-  \[
-  E_{ij} =
-  \begin{cases}
-  -1 & \text{H–H contact} \\
-  0 & \text{otherwise}
-  \end{cases}
-  \]
+
+Binary hydrophobic–polar model:
+
+- H–H contact energy = `-1.0`
+- All other contacts = `0.0`
+- Only non-consecutive lattice neighbors are counted
+
+---
 
 ### MJ96 Model
-- Full **Miyazawa–Jernigan (1996) Table 3**
+
+- Full Miyazawa–Jernigan (1996) Table 3
 - 20×20 symmetric contact energy matrix
-- Real-valued pairwise energies (RT units)
-- Only applied to non-consecutive BCC neighbors
+- Real-valued contact energies (RT units)
+- Applied only to non-consecutive BCC neighbors
 
 ---
 
 ## QUBO Formulation
 
-### Variables
-Binary variable:
-\[
-x_{i,p} =
-\begin{cases}
-1 & \text{residue } i \text{ occupies position } p \\
-0 & \text{otherwise}
-\end{cases}
-\]
+### Binary Variables
 
-Total variables:
-\[
-N \times |\mathcal{P}|
-\]
-where \(\mathcal{P}\) is the set of reachable lattice positions in \(N-1\) steps.
+For residue `i` and lattice position `p`:
 
----
+```
+x[i,p] = 1  if residue i occupies position p
+x[i,p] = 0  otherwise
+```
 
-### Constraints (Penalty Terms)
+Total number of binary variables:
 
-#### 1. One-Hot Constraint
-Each residue occupies exactly one position:
-\[
-\left(\sum_p x_{i,p} - 1\right)^2
-\]
+```
+N × |P|
+```
 
-#### 2. Adjacency Constraint
-Consecutive residues must be neighbors:
-\[
-x_{i,p} \cdot x_{i+1,q} = 0 \quad \text{if } q \notin \mathcal{N}(p)
-\]
-
-#### 3. Collision Constraint
-No two residues share a position:
-\[
-x_{i,p} \cdot x_{j,p} = 0 \quad (i \neq j)
-\]
+where `P` is the set of lattice positions reachable in `N-1` steps.
 
 ---
 
-### Objective Function
+## Constraints (Penalty Terms)
 
-\[
-\min \left(
-\lambda_{\text{onehot}} P_{\text{onehot}} +
-\lambda_{\text{adj}} P_{\text{adj}} +
-\lambda_{\text{coll}} P_{\text{coll}} +
-\sum_{i<j} E_{ij}^{\text{contact}}
-\right)
-\]
+### 1. One-Hot Constraint
 
-Penalty weights are tunable and must dominate contact energies.
+Each residue must occupy **exactly one** lattice position.
+
+Penalty term:
+
+```
+(sum over p of x[i,p] - 1)^2
+```
+
+This enforces both:
+- At least one position selected
+- At most one position selected
+
+---
+
+### 2. Adjacency Constraint
+
+Consecutive residues must be lattice neighbors.
+
+For any non-neighboring positions `p` and `q`:
+
+```
+x[i,p] * x[i+1,q] = 0
+```
+
+Violations incur a positive penalty.
+
+---
+
+### 3. Collision Constraint (Self-Avoidance)
+
+No two residues may occupy the same lattice site.
+
+For all residues `i != j` and any position `p`:
+
+```
+x[i,p] * x[j,p] = 0
+```
+
+This globally enforces excluded volume.
+
+---
+
+## Objective Function
+
+The QUBO minimizes the following total energy:
+
+```
+Total Energy =
+  λ_onehot    * one-hot penalty
++ λ_adj       * adjacency penalty
++ λ_collision * collision penalty
++ contact energy (HP or MJ)
+```
+
+Penalty weights must dominate contact energies to ensure feasibility.
 
 ---
 
@@ -139,69 +178,46 @@ Penalty weights are tunable and must dominate contact energies.
 
 ### One-Hot Preserving Simulated Annealing
 
-Key properties:
-- Maintains feasibility at all times
-- Moves residues between lattice positions
+A custom simulated annealer is implemented with the following properties:
+
+- Always maintains one-hot feasibility
+- Moves one residue at a time
 - Supports:
   - Local neighbor moves
   - Occasional random jumps (ergodicity)
 - Efficient Δ-energy updates using sparse QUBO structure
 
-Algorithm:
+Algorithm outline:
 1. Initialize from a random self-avoiding walk
-2. Iterate annealing schedule
-3. Perform block moves per residue
-4. Accept/reject via Metropolis criterion
-5. Track best solution
+2. Anneal temperature from `T_start` to `T_end`
+3. Propose block moves per residue
+4. Accept/reject using Metropolis criterion
+5. Track best feasible solution
 
 ---
 
 ## Qiskit Integration
 
-- QUBO exported as `QuadraticProgram`
-- Fully compatible with:
+- QUBO export to `qiskit_optimization.QuadraticProgram`
+- Compatible with:
   - QAOA
   - VQE
-  - Classical optimizers via Qiskit Optimization
+  - Classical optimizers
 - Turn encoding allocates:
   - 3 qubits per bond
-  - Explicit register naming (`b0`, `b1`, …)
+  - Named registers: `b0`, `b1`, `b2`, ...
 
 ---
 
-## Example Scale (From Notebook)
+## Example Scale
 
-Model: MJ
-Sequence length (N): 9
-Reachable positions: 1241
-Binary variables: 11,169
-Nonzero QUBO terms: ~19.4 million
-QuadraticProgram variables: 11,169
+From the reference notebook:
 
-
----
-
-## Repository Structure (Conceptual)
-
-
-
-bcc_lattice/
-├── lattice.py # BCC geometry, directions, angles
-├── encoding.py # Turn & coordinate encodings
-├── energy.py # HP & MJ energy models
-├── qubo.py # QUBO construction
-├── annealing.py # One-hot simulated annealer
-├── qiskit_export.py # QuadraticProgram interface
-└── notebook.ipynb # Full experimental pipeline
-
-
----
-
-## Intended Use
-
-- Research prototyping of lattice protein folding
-- Benchmarking QUBO construction strategies
-- Hybrid classical–quantum workflows
+- Sequence length: 9
+- Reachable lattice positions: 1241
+- Binary variables: 11,169
+- Nonzero QUBO terms: ~19.4 million
+- QuadraticProgram variables: 11,169
 
 ---
 
@@ -209,16 +225,14 @@ bcc_lattice/
 
 - QUBO size grows rapidly with sequence length
 - No advanced polymer moves (pivot, crankshaft)
-- Not intended for realistic protein prediction
-- MJ table embedded for convenience (not learned)
+- Not intended for real protein structure prediction
+- MJ table embedded for clarity, not learned
 
 ---
 
 ## References
 
-- Miyazawa, S. & Jernigan, R. L. (1996)  
-  *Residue–residue potentials with a favorable contact energy interpretation*
-- Lau & Dill (1989) HP lattice protein model
-- Lucas (2014) Ising formulations of NP problems
+- Miyazawa & Jernigan (1996), residue–residue potentials
+- Lau & Dill (1989), HP lattice protein model
+- Lucas (2014), Ising formulations of NP problems
 - Qiskit Optimization documentation
-
